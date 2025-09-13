@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CDawg Canvas Stack Multiple of 2 Flasher
 // @namespace    https://canvas.cdawgva.com
-// @version      1
+// @version      2
 // @description  Flashes the entire page red if the palette reaches a multiple of 2.
 // @author       VanillaSixtySix
 // @match        https://canvas.cdawgva.com/
@@ -9,74 +9,104 @@
 // @grant        none
 // ==/UserScript==
 
-(function() {
+(function () {
     'use strict';
 
-    (new MutationObserver(check)).observe(document, { childList: true, subtree: true, characterData: true });
+    const observer = new MutationObserver(check);
+    observer.observe(document, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+    });
 
-    let lastStackCount = 0;
+    let lastStackCount = null;
+    let isFlashing = false;
 
-    function check(upperMutationList, upperObserver) {
-        const stackTextElem = [...document.querySelectorAll('small span')].filter(e => e.innerText.includes('of 6') || e.innerText.includes('seconds'))[0];
-        if (!stackTextElem) return;
-        stackTextElem.id = 'stack-text';
-        const stackMatch = /(\d)+ of (\d)+/;
-        const matches = stackTextElem.innerText.match(stackMatch);
-        if (!matches) {
-            // Possibly on cooldown, ignore
-            return;
-        }
-        const stack = parseInt(matches[1]);
-        const maxStack = parseInt(matches[2]);
+    function check() {
+        const stackInfo = getStackInfo();
+        if (!stackInfo) return;
+
+        const { stack, maxStack } = stackInfo;
 
         if (lastStackCount === stack) return;
-        if (lastStackCount == null) {
+        if (lastStackCount === null) {
             lastStackCount = stack;
             return;
         }
         if (lastStackCount > stack) {
-            // Placing pixels, do not flash
             lastStackCount = stack;
             return;
         }
         lastStackCount = stack;
 
         if (stack % 2 === 0) {
-            console.log('MULTIPLE of 2!');
             flashRedOverlay(2);
+            if (console && console.debug) {
+                console.debug(`[Canvas Flasher] Multiple of 2: ${stack}/${maxStack}`);
+            }
         }
-
-        console.log('Current stack count: ' + stack);
-        console.log('Palette max: ' + maxStack);
     }
 
-    function flashRedOverlay(times) {
-        const overlay = document.createElement('div');
-        overlay.style.position = 'fixed';
-        overlay.style.top = '0';
-        overlay.style.left = '0';
-        overlay.style.width = '100%';
-        overlay.style.height = '100%';
-        overlay.style.backgroundColor = 'red';
-        overlay.style.opacity = '0';
-        overlay.style.pointerEvents = 'none';
-        overlay.style.zIndex = '999999';
-        overlay.style.transition = 'opacity 0.2s ease';
-        document.body.appendChild(overlay);
+    function getStackInfo() {
+        const candidate = Array.from(document.querySelectorAll('small span'))
+        .find((e) => /of\s*\d+/.test(e.innerText) || /seconds/i.test(e.innerText));
+        if (!candidate) return null;
+        if (/seconds/i.test(candidate.innerText)) return null;
+        const m = candidate.innerText.match(/(\d+)\s*of\s*(\d+)/i);
+        if (!m) return null;
+        const stack = parseInt(m[1], 10);
+        const maxStack = parseInt(m[2], 10);
+        if (!Number.isFinite(stack) || !Number.isFinite(maxStack)) return null;
+        candidate.id = 'stack-text';
+        return { stack, maxStack };
+    }
+
+    function flashRedOverlay(times = 2) {
+        if (isFlashing) return;
+        isFlashing = true;
+        const id = 'stack-flash-overlay';
+        let overlay = document.getElementById(id);
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = id;
+            overlay.style.position = 'fixed';
+            overlay.style.top = '0';
+            overlay.style.left = '0';
+            overlay.style.width = '100%';
+            overlay.style.height = '100%';
+            overlay.style.backgroundColor = 'red';
+            overlay.style.opacity = '0';
+            overlay.style.pointerEvents = 'none';
+            overlay.style.zIndex = '2147483647';
+            overlay.style.transition = 'opacity 180ms ease';
+            (document.body || document.documentElement).appendChild(overlay);
+        }
 
         let count = 0;
-        function doFlash() {
-            overlay.style.opacity = '0.7';
+
+        const doOneFlash = () =>
+        new Promise((resolve) => {
+            overlay.style.opacity = '0.75';
             setTimeout(() => {
                 overlay.style.opacity = '0';
-                count++;
-                if (count < times) {
-                    setTimeout(doFlash, 200);
-                } else {
-                    setTimeout(() => overlay.remove(), 300);
+                setTimeout(resolve, 200);
+            }, 180);
+        });
+
+        (async () => {
+            try {
+                while (count < times) {
+                    await doOneFlash();
+                    count++;
+                    if (count < times) await wait(120);
                 }
-            }, 200);
-        }
-        doFlash();
+            } finally {
+                isFlashing = false;
+            }
+        })();
+    }
+
+    function wait(ms) {
+        return new Promise((res) => setTimeout(res, ms));
     }
 })();
